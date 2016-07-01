@@ -1,8 +1,11 @@
+import django_filters as djf
+
 from django.db import models
 from django.test import TestCase, override_settings
 from django.conf.urls import url
 
 from rest_framework import serializers, status, renderers
+from rest_framework.filters import DjangoFilterBackend, OrderingFilter
 from rest_framework.test import APIRequestFactory
 from rest_framework.test import APIClient
 
@@ -117,12 +120,36 @@ class DynamicQueryView(MultipleModelAPIView):
 
         return queryList
 
+
+class PlayFilter(djf.FilterSet):
+    title = djf.CharFilter(lookup_expr='icontains')
+
+    class Meta:
+        model = Play
+        fields = ('title', )
+
+
+class PoemFilter(djf.FilterSet):
+    style = djf.CharFilter(lookup_expr='icontains')
+
+    class Meta:
+        model = Poem
+        fields = ('style', )
+
+
+# Testing Filters and Labels
+class FilterTestView(MultipleModelAPIView):
+    queryList = ((Play.objects.all(), PlaySerializer, {'filter_class': PlayFilter}),
+                 (Poem.objects.all(), PoemSerializer, {'filter_class': PoemFilter}))
+    filter_backends = (DjangoFilterBackend,)
+
+
 # Fake URL Patterns for running tests
 urlpatterns = [
     url(r"^$",TestBrowsableAPIView.as_view()),
 ]
 
-# Tests 
+# Tests
 @override_settings(ROOT_URLCONF=__name__)
 class TestMMViews(TestCase):
     def setUp(self):
@@ -159,14 +186,14 @@ class TestMMViews(TestCase):
         """
 
         view = BasicTestView.as_view()
-        
+
 
         request = factory.get('/')
         with self.assertNumQueries(2):
             response = view(request).render()
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         self.assertEqual(len(response.data),2)
         self.assertEqual(response.data,[
             { 'play': [
@@ -185,7 +212,7 @@ class TestMMViews(TestCase):
 
     def test_post(self):
         """
-        POST requests should throw a 405 Error 
+        POST requests should throw a 405 Error
         """
         view = BasicTestView.as_view()
 
@@ -200,7 +227,7 @@ class TestMMViews(TestCase):
 
     def test_put(self):
         """
-        PUT requests should throw a 405 Error 
+        PUT requests should throw a 405 Error
         """
         view = BasicTestView.as_view()
 
@@ -215,7 +242,7 @@ class TestMMViews(TestCase):
 
     def test_delete(self):
         """
-        DELETE requests should throw a 405 Error 
+        DELETE requests should throw a 405 Error
         """
         view = BasicTestView.as_view()
 
@@ -233,14 +260,14 @@ class TestMMViews(TestCase):
         """
 
         view = BasicNoLabelView.as_view()
-        
+
 
         request = factory.get('/')
         with self.assertNumQueries(2):
             response = view(request).render()
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         self.assertEqual(len(response.data),2)
         self.assertEqual(response.data,[
             [
@@ -254,7 +281,7 @@ class TestMMViews(TestCase):
                 {'title':"As a decrepit father takes delight",'style':'Sonnet'}
             ]
         ]);
-        
+
     def test_new_labels(self):
         """
         Adding labels as a third element in the queryList elements should use those labels
@@ -298,7 +325,7 @@ class TestMMViews(TestCase):
 
     def test_ordered_flat(self):
         """
-        Adding the sorting_field attribute should order the flat items according to whatever field 
+        Adding the sorting_field attribute should order the flat items according to whatever field
         """
 
         view = OrderedFlatView.as_view()
@@ -421,3 +448,26 @@ class TestMMViews(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
+    def test_filters(self):
+        """
+        using filter_class allows more flexibly filter queryLists
+        """
+        view = FilterTestView.as_view()
+
+        request = factory.get('/?title=romeo')
+        with self.assertNumQueries(2):
+            response = view(request)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+
+        self.assertEqual(response.data, [
+            {'play': [
+                OrderedDict([('genre', u'Tragedy'), ('title', u'Romeo And Juliet'), ('year', 1597)])
+            ]},
+            {'poem': [
+                OrderedDict([('title', u"Shall I compare thee to a summer's day?"), ('style', u'Sonnet')]),
+                OrderedDict([('title', u'As a decrepit father takes delight'), ('style', u'Sonnet')]),
+                OrderedDict([('title', u"A Lover's Complaint"), ('style', u'Narrative')])
+            ]}
+        ])

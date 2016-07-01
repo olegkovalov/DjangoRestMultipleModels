@@ -1,4 +1,4 @@
-from rest_framework.response import Response 
+from rest_framework.response import Response
 
 from itertools import chain
 
@@ -18,12 +18,16 @@ class MultipleModelMixin(object):
             .....
     ]
 
-    optionally, you can add a third element to the queryList, a label to define that particular
-    data type:
+    optionally, you can add a third element to the queryList, a dict with params 'label' or 'filter_class':
+
+    params = {
+        'label': 'labelA',
+        'filter_class': FilterClassA
+    }
 
     queryList = [
-            (querysetA,serializerA,'labelA'),
-            (querysetB,serializerB,'labelB'),
+            (querysetA,serializerA, paramsA),
+            (querysetB,serializerB, paramsB),
             (querysetC,serializerC),
             .....
     ]
@@ -56,45 +60,62 @@ class MultipleModelMixin(object):
     def list(self, request, *args, **kwargs):
         queryList = self.get_queryList()
 
+        self._default_filter_class = getattr(self, 'filter_class', None)
+
         # Iterate through the queryList, run each queryset and serialize the data
         results = []
-        for pair in queryList:
+        for opt in queryList:
+            # Get additional params
+            try:
+                obj_to_inspect = opt[2]
+                if isinstance(obj_to_inspect, str):
+                    params = {'label': obj_to_inspect}
+                else:
+                    params = obj_to_inspect
+            except IndexError:
+                params = {}
+
+            self.set_filter_class(params)
+
             # Run the queryset through Django Rest Framework filters
-            queryset = self.filter_queryset(pair[0])
+            queryset = self.filter_queryset(opt[0])
+
+            label = self.get_label(queryset.model.__name__.lower(), params)
 
             # Run the paired serializer
-            data = pair[1](queryset,many=True).data
-
-            # Get the label, unless add_model_type is note set
-            try:
-                label = pair[2]
-            except IndexError:
-                if self.add_model_type:
-                    label = queryset.model.__name__.lower() 
-                else:
-                    label = None
+            data = opt[1](queryset, many=True).data
 
             # if flat=True, Organize the data in a flat manner
             if self.flat:
                 for datum in data:
                     if label:
-                        datum.update({'type':label})
+                        datum.update({'type': label})
                     results.append(datum)
-            
+
             # Otherwise, group the data by Model/Queryset
             else:
                 if label:
-                    data = { label: data }
+                    data = {label: data}
 
                 results.append(data)
 
-
-                
         # Sort by given attribute, if sorting_attribute is provided
         if self.sorting_field and self.flat:
             results = sorted(results, key=lambda datum: datum[self.sorting_field])
 
-
         return Response(results)
 
+    def get_label(self, model_label, params):
+        """
+        Get the label from params, unless add_model_type is note set
+        """
+        label = params.get('label')
+        if not label and self.add_model_type:
+            return model_label
+        return label
 
+    def set_filter_class(self, params):
+        """
+        Set self.filter_class attribute if filter_class was set in params
+        """
+        self.filter_class = params.get('filter_class', self._default_filter_class)
